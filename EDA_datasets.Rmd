@@ -1,0 +1,207 @@
+
+```{r}
+data <- read.csv("AirBnB.csv")
+library(tidyverse)
+```
+
+Checking out how the data looks
+
+```{r}
+summary(data)
+dim(data)
+```
+
+Removing columns host_name, city, state, Total rev for the following reasons:
+      host_name : Irrelevant to the price
+      city, state: Too unique to make categorical, too many levels and not the
+      basis of the research question
+      Total rev: is equal to price * quantity (which here is number of nights
+      and number of people staying), making the response part of the analysis
+      and will become circular
+      Host anniversary: again irrelevant here
+Setting response (price) at the end, just to make cleaning easy
+Dropping rows with null values in these columns. Will come back to this in
+analysis, maybe not the right decision to just drop rows.
+
+```{r}
+data_clean <- data %>%
+  select(-c(
+    host_name,
+    city,
+    state,
+    Total.Rev,
+    host_since_anniversary
+  )) %>%
+  select(setdiff(names(.), "price"), price) %>%
+  drop_na()
+```
+
+Removing the $ symbol in response
+
+```{r}
+data_clean$price <- as.numeric(gsub("[$,]", "", data_clean$price))
+```
+
+Plotting histogram of prices, seeing it is very left skewed, most values are 
+concentrated in the beginning but huge outliers making x-axis large
+
+```{r}
+hist(data_clean$price, breaks = 50, main = "Price Distribution", col = "lightblue")
+```
+
+Plotting for price less than 500 to see distribution more clearly
+
+```{r}
+hist(data_clean$price[data_clean$price < 500],
+     breaks = 50,
+     main = "Price Distribution (< $500)",
+     xlab = "Price ($)",
+     col = "lightblue")
+```
+
+Picking predictors that might be relevant
+
+```{r}
+data_model <- subset(data_clean, select = c(
+  "price", 
+  "room_type", 
+  "property_type", 
+  "accommodates", 
+  "bathrooms", 
+  "bedrooms", 
+  "beds",
+  "minimum_nights",
+  "number_of_reviews",
+  "review_scores_rating",
+  "latitude", "longitude"
+))
+```
+
+Converting categorical variables to levels
+
+```{r}
+data_model$room_type <- as.factor(data_model$room_type)
+data_model$property_type <- as.factor(data_model$property_type)
+```
+
+Fitting mlr model to the cols in price
+
+```{r}
+model <- lm(price ~ room_type + property_type + accommodates + bathrooms +
+              bedrooms + beds + minimum_nights + number_of_reviews +
+              review_scores_rating + latitude + longitude,
+            data = data_model)
+summary(model)
+```
+
+Too many levels for property_type, collapsing into top 3 + other
+
+```{r}
+top3_props <- names(sort(table(data_model$property_type), decreasing = TRUE))[1:3]
+data_model$property_type <- ifelse(data_model$property_type %in% top3_props,
+                                   as.character(data_model$property_type),
+                                   "Other")
+data_model$property_type <- factor(data_model$property_type)
+```
+
+Refitting the model
+
+```{r}
+table(data_model$property_type)
+model2 <- lm(price ~ room_type + property_type + accommodates + bathrooms +
+               bedrooms + beds + minimum_nights + number_of_reviews +
+               review_scores_rating + latitude + longitude + room_type*accommodates,
+             data = data_model)
+summary(model2)
+```
+
+Plots of residuals vs fitted
+
+```{r}
+par(mfrow = c(2, 2))  # 2x2 grid
+plot(model2)
+```
+
+Plotting Residuals vs Predictor for each predictor to see if residuals are random
+
+```{r}
+numeric_predictors <- c("accommodates", "bathrooms", "bedrooms", "beds",
+                        "minimum_nights", "number_of_reviews",
+                        "review_scores_rating", "latitude", "longitude")
+
+par(mfrow = c(3, 3))  
+for (var in numeric_predictors) {
+  plot(data_model[[var]], model2$residuals,
+       main = paste("Residuals vs", var),
+       xlab = var, ylab = "Residuals",
+       pch = 19, col = "purple")
+  abline(h = 0, col = "red")
+}
+```
+
+Plotting the pairs plost for each predictor
+
+```{r}
+numeric_vars <- data_model[, c("price", numeric_predictors)]
+pairs(numeric_vars,
+      main = "Pairs Plot of Numeric Variables",
+      pch = 19, col = rgb(0, 0, 1, 0.4))
+par(mfrow = c(3, 3))
+```
+
+Plotting Response vs predictor for each predictor
+
+```{r}
+for (var in numeric_predictors) {
+  plot(data_model[[var]], data_model$price,
+       main = paste("price vs", var),
+       xlab = var,
+       ylab = "price",
+       pch = 19,
+       col = rgb(0, 0, 1, 0.4))
+  abline(lm(price ~ data_model[[var]], data = data_model), col = "red", lwd = 2)
+}
+```
+
+Seeing relationship between catagorical variables and response - room_type
+
+```{r}
+par(mfrow = c(1, 1))
+par(mfrow = c(1, 2))
+
+boxplot(price ~ room_type,
+        data = data_model,
+        main = "price by room_type",
+        xlab = "room_type",
+        ylab = "price",
+        col = "lightblue")
+```
+
+Seeing relationship between catagorical variables and response - property_type
+
+```{r}
+boxplot(price ~ property_type,
+        data = data_model,
+        main = "price by property_type",
+        xlab = "property_type",
+        ylab = "price",
+        col = "lightgreen",
+        las = 2)  
+
+par(mfrow = c(1, 1))
+```
+
+CIs
+
+```{r}
+confint(model2, level = 0.95)
+library(broom)
+results <- tidy(model2, conf.int = TRUE, conf.level = 0.95)
+results
+library(knitr)
+library(broom)
+
+results <- tidy(model2, conf.int = TRUE)
+kable(results, digits = 3, caption = "Regression Results with 95% Confidence Intervals")
+```
+
